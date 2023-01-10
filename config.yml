@@ -1,0 +1,5 @@
+baseURL: http://yoshisan.github.org/
+languageCode: en-us
+title: random thoughts on cryptography
+theme: PaperMod
+
