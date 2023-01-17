@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en" dir="auto">
+
+<head><meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<meta name="robots" content="index, follow">
+<title>Implementing secp256k1&#39;s Primefield | random thoughts on cryptography</title>
+<meta name="keywords" content="">
+<meta name="description" content="In the following we assume familiarity with the mathematical concept of a Primefield. Bitcoins choosen prime is $$p = 2^{256} - 2^{32} - 977$$ hence 256 bits would be sufficient to represent any field element. Therefore we could encode a field element in only four u64 unsigned integers, called limbs. This, however, would force us too handle possible overflow on any additon of two limbs as we would have to use their full range, which would slow down the addition of two field elements substantially.">
+<meta name="author" content="">
+<link rel="canonical" href="https://joschisan.github.io/posts/implementing-bitcoins-primefield/">
+<link crossorigin="anonymous" href="/assets/css/stylesheet.bccfefac377bc340f06c260aed1bddf49a4354816d7c570d6aac75a997986c95.css" integrity="sha256-vM/vrDd7w0DwbCYK7Rvd9JpDVIFtfFcNaqx1qZeYbJU=" rel="preload stylesheet" as="style">
+<script defer crossorigin="anonymous" src="/assets/js/highlight.f413e19d0714851f6474e7ee9632408e58ac146fbdbe62747134bea2fa3415e0.js" integrity="sha256-9BPhnQcUhR9kdOfuljJAjlisFG&#43;9vmJ0cTS&#43;ovo0FeA="
+    onload="hljs.initHighlightingOnLoad();"></script>
+<link rel="icon" href="https://joschisan.github.io/favicon.ico">
+<link rel="icon" type="image/png" sizes="16x16" href="https://joschisan.github.io/favicon-16x16.png">
+<link rel="icon" type="image/png" sizes="32x32" href="https://joschisan.github.io/favicon-32x32.png">
+<link rel="apple-touch-icon" href="https://joschisan.github.io/apple-touch-icon.png">
+<link rel="mask-icon" href="https://joschisan.github.io/safari-pinned-tab.svg">
+<meta name="theme-color" content="#2e2e33">
+<meta name="msapplication-TileColor" content="#2e2e33">
+<noscript>
+    <style>
+        #theme-toggle,
+        .top-link {
+            display: none;
+        }
+
+    </style>
+    <style>
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --theme: rgb(29, 30, 32);
+                --entry: rgb(46, 46, 51);
+                --primary: rgb(218, 218, 219);
+                --secondary: rgb(155, 156, 157);
+                --tertiary: rgb(65, 66, 68);
+                --content: rgb(196, 196, 197);
+                --hljs-bg: rgb(46, 46, 51);
+                --code-bg: rgb(55, 56, 62);
+                --border: rgb(51, 51, 51);
+            }
+
+            .list {
+                background: var(--theme);
+            }
+
+            .list:not(.dark)::-webkit-scrollbar-track {
+                background: 0 0;
+            }
+
+            .list:not(.dark)::-webkit-scrollbar-thumb {
+                border-color: var(--theme);
+            }
+        }
+
+    </style>
+</noscript><meta property="og:title" content="Implementing secp256k1&#39;s Primefield" />
+<meta property="og:description" content="In the following we assume familiarity with the mathematical concept of a Primefield. Bitcoins choosen prime is $$p = 2^{256} - 2^{32} - 977$$ hence 256 bits would be sufficient to represent any field element. Therefore we could encode a field element in only four u64 unsigned integers, called limbs. This, however, would force us too handle possible overflow on any additon of two limbs as we would have to use their full range, which would slow down the addition of two field elements substantially." />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://joschisan.github.io/posts/implementing-bitcoins-primefield/" /><meta property="article:section" content="posts" />
+<meta property="article:published_time" content="2023-01-04T19:01:41+01:00" />
+<meta property="article:modified_time" content="2023-01-04T19:01:41+01:00" />
+
+<meta name="twitter:card" content="summary"/>
+<meta name="twitter:title" content="Implementing secp256k1&#39;s Primefield"/>
+<meta name="twitter:description" content="In the following we assume familiarity with the mathematical concept of a Primefield. Bitcoins choosen prime is $$p = 2^{256} - 2^{32} - 977$$ hence 256 bits would be sufficient to represent any field element. Therefore we could encode a field element in only four u64 unsigned integers, called limbs. This, however, would force us too handle possible overflow on any additon of two limbs as we would have to use their full range, which would slow down the addition of two field elements substantially."/>
+
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [, 
+    {
+      "@type": "ListItem",
+      "position":  2 ,
+      "name": "Posts",
+      "item": "https://joschisan.github.io/posts/"
+    }, 
+    {
+      "@type": "ListItem",
+      "position":  3 ,
+      "name": "Implementing secp256k1's Primefield",
+      "item": "https://joschisan.github.io/posts/implementing-bitcoins-primefield/"
+    }
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Implementing secp256k1's Primefield",
+  "name": "Implementing secp256k1\u0027s Primefield",
+  "description": "In the following we assume familiarity with the mathematical concept of a Primefield. Bitcoins choosen prime is $$p = 2^{256} - 2^{32} - 977$$ hence 256 bits would be sufficient to represent any field element. Therefore we could encode a field element in only four u64 unsigned integers, called limbs. This, however, would force us too handle possible overflow on any additon of two limbs as we would have to use their full range, which would slow down the addition of two field elements substantially.",
+  "keywords": [
+    
+  ],
+  "articleBody": "In the following we assume familiarity with the mathematical concept of a Primefield. Bitcoins choosen prime is $$p = 2^{256} - 2^{32} - 977$$ hence 256 bits would be sufficient to represent any field element. Therefore we could encode a field element in only four u64 unsigned integers, called limbs. This, however, would force us too handle possible overflow on any additon of two limbs as we would have to use their full range, which would slow down the addition of two field elements substantially. Furthermore, the product of two limbs is at most a 128 bit integer. Hence it can be represented by Rust’s u128 integer type, however, the sum of two of such products might be a 129 bit integer, again requiring us to handle possible overflow. This would slow down the multiplication of two field elements which requires us to multiply their limbs and summ over the products. To prevent this we therefore represent a field element $x \\in F_p$ with five u64 limbs $l_0,l_1,l_2,l_3,l_4$. We call these limbs the representation of $x$ and define the representations value as $$\\sum_{k \\le 4} l_k \\cdot 2^{52k}$$ For the representation of $$p_0 = FFFFEFFFFFC2F_{16}$$ $$p_1 = FFFFFFFFFFFFF_{16}$$ $$p_2 = FFFFFFFFFFFFF_{16}$$ $$p_3 = FFFFFFFFFFFFF_{16}$$ $$p_4 = 0FFFFFFFFFFFF_{16}$$ in base 16 we get the value of our prime $p$ itself. Notice that we can now have multiple possible representations with the same value as the highest 12 bits of $l_k$ overlap with the lowest 12 bits of $l_{k + 1}$. The value of a representation may be any 272 bit unsigned int. Hence, the map from representations to field elements defined by $$(l_k) \\mapsto \\sum_{k \\le 4} l_k \\cdot 2^{52k} \\in F_p$$ is a surjection. Using five limbs we can now represent up to 272 bit unsigned integers using only the lowest 52 bits of limbs 1 to 3 and 48 bits of limbs 4. Therefore, we can compute the sum of any two elements without any overflow if we choose representations with limbs of at least one leading zero. Furthermore the product of two 53 bit limbs would be at most a 104 bit integer, leaving us plenty of headroom too add several of those products when using the u128 integer type. To assure that we maintain sufficient headroom to prevent overflow we track the the maximal number of bits of a representations limbs, which we call the representations magnitude. Finally, we define a field element as\npub struct Element { pub limbs: [u64; 5], pub magnitude: u64 } and implement the method\npub fn verify(self) { assert!((self.limbs[0] \u003e\u003e (self.magnitude + 52)) == 0); assert!((self.limbs[1] \u003e\u003e (self.magnitude + 52)) == 0); assert!((self.limbs[2] \u003e\u003e (self.magnitude + 52)) == 0); assert!((self.limbs[3] \u003e\u003e (self.magnitude + 52)) == 0); assert!((self.limbs[4] \u003e\u003e (self.magnitude + 49)) == 0); } to verify that we track our headroom correctly. We can now implement additon without any overflow by overloading the + operator:\nfn add(self, rhs: Self) -\u003e Self { assert!(self.magnitude \u003c 12); assert!(rhs.magnitude \u003c 12); self.verify(); rhs.verify(); Self { limbs: [0, 1, 2, 3, 4].map(|i| self.limbs[i] + rhs.limbs[i]), magnitude: cmp::max(self.magnitude, rhs.magnitude) + 1, } } Furthermore we implemement a method to calculate the additive inverse of an element:\npub fn negative(self) -\u003e Self { const P: [u64; 5] = [ 0xFFFFEFFFFFC2F, 0xFFFFFFFFFFFFF, 0xFFFFFFFFFFFFF, 0xFFFFFFFFFFFFF, 0xFFFFFFFFFFFF, ]; assert!(self.magnitude \u003c 12); self.verify(); Self { limbs: [0, 1, 2, 3, 4].map(|i| (P[i] \u003c\u003c (self.magnitude + 1)) - self.limbs[i]), magnitude: self.magnitude + 1, } } When we run out of headroom after several operations such as additions or negation we then subtract a multiple of p from our representation to reduce the maximal number of bits in each limb. We recall that $p = 2^{256} - r$ for $r = 2^{32} + 977$. Hence, when we subtract a $m2^{256}$ for $m = l_k » 48$ from our representation by setting the 16 most significant bits of $l_4$ to zero, we need to add $mr$ to our representation to maintain congruency modulo p. This is where the choice of prime becomes important for the effifiency of this implementation as we can fit the product $mr$ of at most 45bits in a u64, which can now be added to $l_0$. Therefore the Prime of secp256k1 has been specifically choosen such that $2^{256} - p$ has a low number of bits. To prevent overflow we require at least a single bit of headroom in all limbs when calling the reduce method:\npub fn reduce(self) -\u003e Self { const MASK_52: u64 = 0xFFFFFFFFFFFFF; const MASK_48: u64 = 0xFFFFFFFFFFFF; const R: u64 = 0x1000003D1; assert!(self.magnitude \u003c 12); self.verify(); let mut limbs = self.limbs; limbs[0] += (limbs[4] \u003e\u003e 48) * R; limbs[4] \u0026= MASK_48; limbs[1] += limbs[0] \u003e\u003e 52; limbs[2] += limbs[1] \u003e\u003e 52; limbs[3] += limbs[2] \u003e\u003e 52; limbs[4] += limbs[3] \u003e\u003e 52; limbs[0] \u0026= MASK_52; limbs[1] \u0026= MASK_52; limbs[2] \u0026= MASK_52; limbs[3] \u0026= MASK_52; Self { limbs, magnitude: 0, } } By masking $l_4$ we obtain $l_4 \\le 2^{48}$. After we have added a 12 bit carry from $l_3$ we can derive $$l_4 \\le 2^{48} + 2^{12} \\le 2^{49} - 2 = 2(2^{48} - 1) = 2p_4$$ where $p_4$ is the most significant limbs of our primes representation as defined earlier. Therefore the value of a reduced representation is smaller the 2p. However, this bound is not sufficient to compute a unique representation for any field element. To achieve this we need to find a äquivalent representation of value is smaller then p, which we call normalized. Hence a representation represents the zero element if and only if its corresponding normalized representations value is zero. We will now implement a method to compute the normal representation of a given representation.\npub fn normalize(self) -\u003e Self { const MASK_52: u64 = 0xFFFFFFFFFFFFF; const MASK_48: u64 = 0xFFFFFFFFFFFF; const R: u64 = 0x1000003D1; const P: [u64;5] = [ 0xFFFFEFFFFFC2F, 0xFFFFFFFFFFFFF, 0xFFFFFFFFFFFFF, 0xFFFFFFFFFFFFF, 0xFFFFFFFFFFFF ]; // after reduction the value of of a representation is less than 2p // since l_4 \u003c= MASK_48 + 2^12 \u003c 2 * MASK_48 and the bits of l_3 // that overlap with l_4 are zero let mut limbs = self.reduce().limbs; // Since there is no overlap in the limbs we can compare the arrays in // colexicographical order to determine if the representation is normalized let normalized = limbs.iter().rev().lt(P.iter().rev()); if !normalized { // Since a reduced representations value is less then 2p we // have to subtract P only once to achieve a normalized representation. limbs[0] += R; limbs[1] += limbs[0] \u003e\u003e 52; limbs[2] += limbs[1] \u003e\u003e 52; limbs[3] += limbs[2] \u003e\u003e 52; limbs[4] += limbs[3] \u003e\u003e 52; limbs[0] \u0026= MASK_52; limbs[1] \u0026= MASK_52; limbs[2] \u0026= MASK_52; limbs[3] \u0026= MASK_52; // Since the value of a representaion is larger or equal to P // and P + R = 2^256 we carry to bit 49 of limb 4 if it was not // set to 1 already. Furthermore the representations value is // smaller then 2p + R = 2^256 + P \u003c= 2^257 assert!(limbs[4] \u003e\u003e 48 == 1); // by zeroing bit 49 we subtract 2^256 and maintain congruecy modulo P limbs[4] \u0026= MASK_48; }; // verify the representation is normalized assert!(limbs.iter().rev().lt(P.iter().rev())); Self { limbs, magnitude: 0, } Now two elements are equal if and only if the normal representation of their difference is zero and we can implement the PartialEq trait for Element.\nimpl PartialEq for Element { fn eq(\u0026self, rhs: \u0026Self) -\u003e bool { (*self - *rhs).normalize().limbs == [0,0,0,0,0] } } pub fn multiply(a: field::Element, b: field::Element) -\u003e field::Element { const MASK_48: u128 = 0xFFFFFFFFFFFF; const MASK_52: u128 = 0xFFFFFFFFFFFFF; const MASK_64: u128 = 0xFFFFFFFFFFFFFFFF; const R: u128 = 0x1000003D10; assert!(a.magnitude \u003c 5); assert!(b.magnitude \u003c 5); a.verify(); b.verify(); let a0 = a.limbs[0] as u128; let a1 = a.limbs[1] as u128; let a2 = a.limbs[2] as u128; let a3 = a.limbs[3] as u128; let a4 = a.limbs[4] as u128; let b0 = b.limbs[0] as u128; let b1 = b.limbs[1] as u128; let b2 = b.limbs[2] as u128; let b3 = b.limbs[3] as u128; let b4 = b.limbs[4] as u128; // [... a b c] is a shorthand for ... + a\u003c\u003c104 + b\u003c\u003c52 + c\u003c\u003c0 mod n. // for 0 \u003c= x \u003c= 4, px is a shorthand for sum(a[i]*b[x-i], i=0..x). // for 4 \u003c= x \u003c= 8, px is a shorthand for sum(a[i]*b[x-i], i=(x-4)..4) // Note that [x 0 0 0 0 0] = [x*R]. let mut d = a0 * b3 + a1 * b2 + a2 * b1 + a3 * b0; assert!(d \u003e\u003e 114 == 0); // [d 0 0 0] = [p3 0 0 0] let mut c = a4 * b4; assert!(c \u003e\u003e 112 == 0); // [c 0 0 0 0 d 0 0 0] = [p8 0 0 0 0 p3 0 0 0] d += (c \u0026 MASK_64) * R; c \u003e\u003e= 64; assert!(d \u003e\u003e 115 == 0); assert!(c \u003e\u003e 48 == 0); // [(c\u003c\u003c12) 0 0 0 0 0 d 0 0 0] = [p8 0 0 0 0 p3 0 0 0] let t3 = d \u0026 MASK_52; d \u003e\u003e= 52; assert!(t3 \u003e\u003e 52 == 0); assert!(d \u003e\u003e 63 == 0); // [(c\u003c\u003c12) 0 0 0 0 d t3 0 0 0] = [p8 0 0 0 0 p3 0 0 0] d += a0 * b4 + a1 * b3 + a2 * b2 + a3 * b1 + a4 * b0; assert!(d \u003e\u003e 115 == 0); // [(c\u003c\u003c12) 0 0 0 0 d t3 0 0 0] = [p8 0 0 0 p4 p3 0 0 0] d += (c \u0026 MASK_64) * (R \u003c\u003c 12); assert!(d \u003e\u003e 116 == 0); // [d t3 0 0 0] = [p8 0 0 0 p4 p3 0 0 0] let mut t4 = d \u0026 MASK_52; d \u003e\u003e= 52; assert!(t4 \u003e\u003e 52 == 0); assert!(d \u003e\u003e 64 == 0); // [d t4 t3 0 0 0] = [p8 0 0 0 p4 p3 0 0 0] let tx = t4 \u003e\u003e 48; t4 \u0026= MASK_48; assert!(tx \u003e\u003e 4 == 0); assert!(t4 \u003e\u003e 48 == 0); // [d (t4 + (tx \u003c\u003c 48)) t3 0 0 0] = [p8 0 0 0 p4 p3 0 0 0] */ // c = a0 * b0; assert!(c \u003e\u003e 112 == 0); // [d t4+(tx\u003c\u003c48) t3 0 0 c] = [p8 0 0 0 p4 p3 0 0 p0] d += a1 * b4 + a2 * b3 + a3 * b2 + a4 * b1; assert!(d \u003e\u003e 115 == 0); // [d (t4 + (tx \u003c\u003c 48)) t3 0 0 c] = [p8 0 0 p5 p4 p3 0 0 p0] let mut u0 = d \u0026 MASK_52; d \u003e\u003e= 52; assert!(u0 \u003e\u003e 52 == 0); assert!(d \u003e\u003e 63 == 0); // [d u0 (t4 + (tx \u003c\u003c 48)) t3 0 0 c] = [p8 0 0 p5 p4 p3 0 0 p0] // [d 0 (t4 + (tx \u003c\u003c 48) + (u0 \u003c\u003c 52)) t3 0 0 c] = [p8 0 0 p5 p4 p3 0 0 p0] u0 = (u0 \u003c\u003c 4) | tx; assert!(u0 \u003e\u003e 56 == 0); // [d 0 t4+(u0\u003c\u003c48) t3 0 0 c] = [p8 0 0 p5 p4 p3 0 0 p0] c += u0 * (R \u003e\u003e 4); assert!(c \u003e\u003e 115 == 0); // [d 0 t4 t3 0 0 c] = [p8 0 0 p5 p4 p3 0 0 p0] let r0 = c \u0026 MASK_52; c \u003e\u003e= 52; assert!(r0 \u003e\u003e 52 == 0); assert!(c \u003e\u003e 61 == 0); // [d 0 t4 t3 0 c r0] = [p8 0 0 p5 p4 p3 0 0 p0] c += a0 * b1 + a1 * b0; assert!(c \u003e\u003e 114 == 0); // [d 0 t4 t3 0 c r0] = [p8 0 0 p5 p4 p3 0 p1 p0] d += a2 * b4 + a3 * b3 + a4 * b2; assert!(d \u003e\u003e 114 == 0); // [d 0 t4 t3 0 c r0] = [p8 0 p6 p5 p4 p3 0 p1 p0] c += (d \u0026 MASK_52) * R; d \u003e\u003e= 52; assert!(c \u003e\u003e 115 == 0); assert!(d \u003e\u003e 62 == 0); // [d 0 0 t4 t3 0 c r0] = [p8 0 p6 p5 p4 p3 0 p1 p0] let r1 = c \u0026 MASK_52; c \u003e\u003e= 52; assert!(r1 \u003e\u003e 52 == 0); assert!(c \u003e\u003e 63 == 0); // [d 0 0 t4 t3 c r1 r0] = [p8 0 p6 p5 p4 p3 0 p1 p0] c += a0 * b2 + a1 * b1 + a2 * b0; assert!(c \u003e\u003e 114 == 0); // [d 0 0 t4 t3 c r1 r0] = [p8 0 p6 p5 p4 p3 p2 p1 p0] d += a3 * b4 + a4 * b3; assert!(d \u003e\u003e 114 == 0); // [d 0 0 t4 t3 c t1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0] c += (d \u0026 MASK_64) * R; d \u003e\u003e= 64; assert!(c \u003e\u003e 115 == 0); assert!(d \u003e\u003e 50 == 0); // [(d\u003c\u003c12) 0 0 0 t4 t3 c r1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0] let r2 = c \u0026 MASK_52; c \u003e\u003e= 52; assert!(r2 \u003e\u003e 52 == 0); assert!(c \u003e\u003e 63 == 0); // [(d\u003c\u003c12) 0 0 0 t4 (t3 + c) r2 r1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0] c += (d \u0026 MASK_64) * (R \u003c\u003c 12); c += t3; assert!(c \u003e\u003e 100 == 0); // [t4 c r2 r1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0] let r3 = c \u0026 MASK_52; c \u003e\u003e= 52; assert!(r3 \u003e\u003e 52 == 0); assert!(c \u003e\u003e 48 == 0); // [t4+c r3 r2 r1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0] let r4 = (c \u0026 MASK_64) + t4; assert!(r4 \u003e\u003e 49 == 0); // [r4 r3 r2 r1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0] field::Element { limbs: [r0 as u64, r1 as u64, r2 as u64, r3 as u64, r4 as u64], magnitude: 0, } } ",
+  "wordCount" : "2348",
+  "inLanguage": "en",
+  "datePublished": "2023-01-04T19:01:41+01:00",
+  "dateModified": "2023-01-04T19:01:41+01:00",
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://joschisan.github.io/posts/implementing-bitcoins-primefield/"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "random thoughts on cryptography",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://joschisan.github.io/favicon.ico"
+    }
+  }
+}
+</script>
+</head>
+
+<body class="" id="top">
+<script>
+    if (localStorage.getItem("pref-theme") === "dark") {
+        document.body.classList.add('dark');
+    } else if (localStorage.getItem("pref-theme") === "light") {
+        document.body.classList.remove('dark')
+    } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        document.body.classList.add('dark');
+    }
+
+</script>
+
+<header class="header">
+    <nav class="nav">
+        <div class="logo">
+            <a href="https://joschisan.github.io" accesskey="h" title="random thoughts on cryptography (Alt + H)">random thoughts on cryptography</a>
+            <div class="logo-switches">
+                <button id="theme-toggle" accesskey="t" title="(Alt + T)">
+                    <svg id="moon" xmlns="http://www.w3.org/2000/svg" width="24" height="18" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                    <svg id="sun" xmlns="http://www.w3.org/2000/svg" width="24" height="18" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="5"></circle>
+                        <line x1="12" y1="1" x2="12" y2="3"></line>
+                        <line x1="12" y1="21" x2="12" y2="23"></line>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                        <line x1="1" y1="12" x2="3" y2="12"></line>
+                        <line x1="21" y1="12" x2="23" y2="12"></line>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <ul id="menu">
+        </ul>
+    </nav>
+</header>
+<main class="main">
+
+<article class="post-single">
+  <header class="post-header">
+    
+    <h1 class="post-title">
+      Implementing secp256k1&#39;s Primefield
+    </h1>
+    <div class="post-meta"><span title='2023-01-04 19:01:41 +0100 CET'>January 4, 2023</span>
+
+</div>
+  </header> 
+  <div class="post-content"><p>In the following we assume familiarity with the mathematical concept of a Primefield.
+Bitcoins choosen prime is
+$$p = 2^{256} - 2^{32} - 977$$
+hence 256 bits would be sufficient to represent any field element. Therefore we could
+encode a field element in only four u64 unsigned integers, called limbs. This, however,
+would force us too handle possible overflow on any additon of two limbs as we would
+have to use their full range, which would slow down the addition of two field elements
+substantially. Furthermore, the product of two limbs is at most a 128 bit integer.
+Hence it can be represented by Rust&rsquo;s u128 integer type, however, the sum of two of such
+products might be a 129 bit integer, again requiring us to handle possible overflow.
+This would slow down the multiplication of two field elements which requires us to multiply
+their limbs and summ over the products. To prevent this we therefore represent a field
+element $x \in F_p$ with five u64 limbs $l_0,l_1,l_2,l_3,l_4$. We call these limbs
+the representation of $x$ and define the representations value as
+$$\sum_{k \le 4} l_k \cdot 2^{52k}$$
+For the representation of
+$$p_0 = FFFFEFFFFFC2F_{16}$$
+$$p_1 = FFFFFFFFFFFFF_{16}$$
+$$p_2 = FFFFFFFFFFFFF_{16}$$
+$$p_3 = FFFFFFFFFFFFF_{16}$$
+$$p_4 = 0FFFFFFFFFFFF_{16}$$
+in base 16 we get the value of our prime $p$ itself. Notice that we can now have multiple
+possible representations with the same value as the highest 12 bits of $l_k$ overlap with
+the lowest 12 bits of $l_{k + 1}$.  The value of a representation may be any 272 bit
+unsigned int. Hence, the map from representations to field elements defined by
+$$(l_k) \mapsto \sum_{k \le 4} l_k \cdot 2^{52k} \in F_p$$
+is a surjection. Using five limbs we can now represent up to 272 bit
+unsigned integers using only the lowest 52 bits of limbs 1 to 3 and 48 bits of limbs 4.
+Therefore, we can compute the sum of any two elements without any overflow if
+we choose representations with limbs of at least one leading zero. Furthermore the product
+of two 53 bit limbs would be at most a 104 bit integer, leaving us plenty of headroom too add
+several of those products when using the u128 integer type. To assure that we maintain sufficient
+headroom to prevent overflow we track the the maximal number of bits of a representations limbs,
+which we call the representations magnitude. Finally, we define a field element as</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#66d9ef">pub</span> <span style="color:#66d9ef">struct</span> <span style="color:#a6e22e">Element</span> {
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">pub</span> limbs: [<span style="color:#66d9ef">u64</span>; <span style="color:#ae81ff">5</span>],
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">pub</span> magnitude: <span style="color:#66d9ef">u64</span>
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p>and implement the method</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#66d9ef">pub</span> <span style="color:#66d9ef">fn</span> <span style="color:#a6e22e">verify</span>(self) {
+</span></span><span style="display:flex;"><span>        assert!((self.limbs[<span style="color:#ae81ff">0</span>] <span style="color:#f92672">&gt;&gt;</span> (self.magnitude <span style="color:#f92672">+</span> <span style="color:#ae81ff">52</span>)) <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>        assert!((self.limbs[<span style="color:#ae81ff">1</span>] <span style="color:#f92672">&gt;&gt;</span> (self.magnitude <span style="color:#f92672">+</span> <span style="color:#ae81ff">52</span>)) <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>        assert!((self.limbs[<span style="color:#ae81ff">2</span>] <span style="color:#f92672">&gt;&gt;</span> (self.magnitude <span style="color:#f92672">+</span> <span style="color:#ae81ff">52</span>)) <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>        assert!((self.limbs[<span style="color:#ae81ff">3</span>] <span style="color:#f92672">&gt;&gt;</span> (self.magnitude <span style="color:#f92672">+</span> <span style="color:#ae81ff">52</span>)) <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>        assert!((self.limbs[<span style="color:#ae81ff">4</span>] <span style="color:#f92672">&gt;&gt;</span> (self.magnitude <span style="color:#f92672">+</span> <span style="color:#ae81ff">49</span>)) <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    }
+</span></span></code></pre></div><p>to verify that we track our headroom correctly. We can now implement
+additon without any overflow by overloading the + operator:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span> <span style="color:#66d9ef">fn</span> <span style="color:#a6e22e">add</span>(self, rhs: <span style="color:#a6e22e">Self</span>) -&gt; <span style="color:#a6e22e">Self</span> {
+</span></span><span style="display:flex;"><span>        assert!(self.magnitude <span style="color:#f92672">&lt;</span> <span style="color:#ae81ff">12</span>);
+</span></span><span style="display:flex;"><span>        assert!(rhs.magnitude <span style="color:#f92672">&lt;</span> <span style="color:#ae81ff">12</span>);
+</span></span><span style="display:flex;"><span>        self.verify();
+</span></span><span style="display:flex;"><span>        rhs.verify();
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        Self {
+</span></span><span style="display:flex;"><span>            limbs: [<span style="color:#ae81ff">0</span>, <span style="color:#ae81ff">1</span>, <span style="color:#ae81ff">2</span>, <span style="color:#ae81ff">3</span>, <span style="color:#ae81ff">4</span>].map(<span style="color:#f92672">|</span>i<span style="color:#f92672">|</span> self.limbs[i] <span style="color:#f92672">+</span> rhs.limbs[i]),
+</span></span><span style="display:flex;"><span>            magnitude: <span style="color:#a6e22e">cmp</span>::max(self.magnitude, rhs.magnitude) <span style="color:#f92672">+</span> <span style="color:#ae81ff">1</span>,
+</span></span><span style="display:flex;"><span>        }
+</span></span><span style="display:flex;"><span>    }
+</span></span></code></pre></div><p>Furthermore we implemement a method to calculate the additive inverse of an element:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span> <span style="color:#66d9ef">pub</span> <span style="color:#66d9ef">fn</span> <span style="color:#a6e22e">negative</span>(self) -&gt; <span style="color:#a6e22e">Self</span> {
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">const</span> P: [<span style="color:#66d9ef">u64</span>; <span style="color:#ae81ff">5</span>] <span style="color:#f92672">=</span> [
+</span></span><span style="display:flex;"><span>            <span style="color:#ae81ff">0xFFFFEFFFFFC2F</span>,
+</span></span><span style="display:flex;"><span>            <span style="color:#ae81ff">0xFFFFFFFFFFFFF</span>,
+</span></span><span style="display:flex;"><span>            <span style="color:#ae81ff">0xFFFFFFFFFFFFF</span>,
+</span></span><span style="display:flex;"><span>            <span style="color:#ae81ff">0xFFFFFFFFFFFFF</span>,
+</span></span><span style="display:flex;"><span>            <span style="color:#ae81ff">0xFFFFFFFFFFFF</span>,
+</span></span><span style="display:flex;"><span>        ];
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        assert!(self.magnitude <span style="color:#f92672">&lt;</span> <span style="color:#ae81ff">12</span>);
+</span></span><span style="display:flex;"><span>        self.verify();
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        Self {
+</span></span><span style="display:flex;"><span>            limbs: [<span style="color:#ae81ff">0</span>, <span style="color:#ae81ff">1</span>, <span style="color:#ae81ff">2</span>, <span style="color:#ae81ff">3</span>, <span style="color:#ae81ff">4</span>].map(<span style="color:#f92672">|</span>i<span style="color:#f92672">|</span> (P[i] <span style="color:#f92672">&lt;&lt;</span> (self.magnitude <span style="color:#f92672">+</span> <span style="color:#ae81ff">1</span>)) <span style="color:#f92672">-</span> self.limbs[i]),
+</span></span><span style="display:flex;"><span>            magnitude: <span style="color:#a6e22e">self</span>.magnitude <span style="color:#f92672">+</span> <span style="color:#ae81ff">1</span>,
+</span></span><span style="display:flex;"><span>        }
+</span></span><span style="display:flex;"><span>    }
+</span></span></code></pre></div><p>When we run out of headroom after several operations such as additions or negation we
+then subtract a multiple of p from our representation to reduce the maximal number of
+bits in each limb. We recall that $p = 2^{256} - r$ for $r = 2^{32} + 977$. Hence,
+when we subtract a $m2^{256}$ for $m = l_k &raquo; 48$ from our representation by setting
+the 16 most significant bits of $l_4$ to zero, we need to add $mr$ to our representation
+to maintain congruency modulo p. This is where the choice of prime becomes important for
+the effifiency of this implementation as we can fit the product $mr$ of at most 45bits
+in a u64, which can now be added to $l_0$. Therefore the Prime of secp256k1 has been
+specifically choosen such that $2^{256} - p$ has a low number of bits. To prevent overflow
+we require at least a single bit of headroom in all limbs when calling the reduce method:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#66d9ef">pub</span> <span style="color:#66d9ef">fn</span> <span style="color:#a6e22e">reduce</span>(self) -&gt; <span style="color:#a6e22e">Self</span> {
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">const</span> MASK_52: <span style="color:#66d9ef">u64</span> <span style="color:#f92672">=</span> <span style="color:#ae81ff">0xFFFFFFFFFFFFF</span>;
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">const</span> MASK_48: <span style="color:#66d9ef">u64</span> <span style="color:#f92672">=</span> <span style="color:#ae81ff">0xFFFFFFFFFFFF</span>;
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">const</span> R: <span style="color:#66d9ef">u64</span> <span style="color:#f92672">=</span> <span style="color:#ae81ff">0x1000003D1</span>;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        assert!(self.magnitude <span style="color:#f92672">&lt;</span> <span style="color:#ae81ff">12</span>);
+</span></span><span style="display:flex;"><span>        self.verify();
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">let</span> <span style="color:#66d9ef">mut</span> limbs <span style="color:#f92672">=</span> self.limbs;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        limbs[<span style="color:#ae81ff">0</span>] <span style="color:#f92672">+=</span> (limbs[<span style="color:#ae81ff">4</span>] <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">48</span>) <span style="color:#f92672">*</span> R;
+</span></span><span style="display:flex;"><span>        limbs[<span style="color:#ae81ff">4</span>] <span style="color:#f92672">&amp;=</span> MASK_48;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        limbs[<span style="color:#ae81ff">1</span>] <span style="color:#f92672">+=</span> limbs[<span style="color:#ae81ff">0</span>] <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">52</span>;
+</span></span><span style="display:flex;"><span>        limbs[<span style="color:#ae81ff">2</span>] <span style="color:#f92672">+=</span> limbs[<span style="color:#ae81ff">1</span>] <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">52</span>;
+</span></span><span style="display:flex;"><span>        limbs[<span style="color:#ae81ff">3</span>] <span style="color:#f92672">+=</span> limbs[<span style="color:#ae81ff">2</span>] <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">52</span>;
+</span></span><span style="display:flex;"><span>        limbs[<span style="color:#ae81ff">4</span>] <span style="color:#f92672">+=</span> limbs[<span style="color:#ae81ff">3</span>] <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">52</span>;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        limbs[<span style="color:#ae81ff">0</span>] <span style="color:#f92672">&amp;=</span> MASK_52;
+</span></span><span style="display:flex;"><span>        limbs[<span style="color:#ae81ff">1</span>] <span style="color:#f92672">&amp;=</span> MASK_52;
+</span></span><span style="display:flex;"><span>        limbs[<span style="color:#ae81ff">2</span>] <span style="color:#f92672">&amp;=</span> MASK_52;
+</span></span><span style="display:flex;"><span>        limbs[<span style="color:#ae81ff">3</span>] <span style="color:#f92672">&amp;=</span> MASK_52;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        Self {
+</span></span><span style="display:flex;"><span>            limbs,
+</span></span><span style="display:flex;"><span>            magnitude: <span style="color:#ae81ff">0</span>,
+</span></span><span style="display:flex;"><span>        }
+</span></span><span style="display:flex;"><span>    }
+</span></span></code></pre></div><p>By masking $l_4$ we obtain $l_4 \le 2^{48}$. After we have added a 12 bit carry from
+$l_3$ we can derive
+$$l_4 \le 2^{48} + 2^{12} \le 2^{49} - 2 = 2(2^{48} - 1) = 2p_4$$
+where $p_4$ is the most significant limbs of our primes representation as defined earlier.
+Therefore the value of a reduced representation is smaller the 2p. However, this bound
+is not sufficient to compute a unique representation for any field element. To achieve
+this we need to find a äquivalent representation of value is smaller then p, which we
+call normalized. Hence a representation represents the zero element if and only if its
+corresponding normalized representations value is zero. We will now implement
+a method to compute the normal representation of a given representation.</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#66d9ef">pub</span> <span style="color:#66d9ef">fn</span> <span style="color:#a6e22e">normalize</span>(self) -&gt; <span style="color:#a6e22e">Self</span> {
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">const</span> MASK_52: <span style="color:#66d9ef">u64</span> <span style="color:#f92672">=</span> <span style="color:#ae81ff">0xFFFFFFFFFFFFF</span>;
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">const</span> MASK_48: <span style="color:#66d9ef">u64</span> <span style="color:#f92672">=</span> <span style="color:#ae81ff">0xFFFFFFFFFFFF</span>;
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">const</span> R: <span style="color:#66d9ef">u64</span> <span style="color:#f92672">=</span> <span style="color:#ae81ff">0x1000003D1</span>;
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">const</span> P: [<span style="color:#66d9ef">u64</span>;<span style="color:#ae81ff">5</span>] <span style="color:#f92672">=</span> [
+</span></span><span style="display:flex;"><span>            <span style="color:#ae81ff">0xFFFFEFFFFFC2F</span>,
+</span></span><span style="display:flex;"><span>            <span style="color:#ae81ff">0xFFFFFFFFFFFFF</span>,
+</span></span><span style="display:flex;"><span>            <span style="color:#ae81ff">0xFFFFFFFFFFFFF</span>,
+</span></span><span style="display:flex;"><span>            <span style="color:#ae81ff">0xFFFFFFFFFFFFF</span>,
+</span></span><span style="display:flex;"><span>            <span style="color:#ae81ff">0xFFFFFFFFFFFF</span>
+</span></span><span style="display:flex;"><span>        ];
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        <span style="color:#75715e">// after reduction the value of of a representation is less than 2p
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>        <span style="color:#75715e">// since l_4 &lt;= MASK_48 + 2^12 &lt; 2 * MASK_48 and the bits of l_3
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>        <span style="color:#75715e">// that overlap with l_4 are zero
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>        <span style="color:#66d9ef">let</span> <span style="color:#66d9ef">mut</span> limbs <span style="color:#f92672">=</span> self.reduce().limbs;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        <span style="color:#75715e">// Since there is no overlap in the limbs we can compare the arrays in
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>        <span style="color:#75715e">// colexicographical order to determine if the representation is normalized
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>        <span style="color:#66d9ef">let</span> normalized <span style="color:#f92672">=</span> limbs.iter().rev().lt(P.iter().rev());
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">if</span> <span style="color:#f92672">!</span>normalized {
+</span></span><span style="display:flex;"><span>            <span style="color:#75715e">// Since a reduced representations value is less then 2p we
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>            <span style="color:#75715e">// have to subtract P only once to achieve a normalized representation.
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>            limbs[<span style="color:#ae81ff">0</span>] <span style="color:#f92672">+=</span> R;
+</span></span><span style="display:flex;"><span>            limbs[<span style="color:#ae81ff">1</span>] <span style="color:#f92672">+=</span> limbs[<span style="color:#ae81ff">0</span>] <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">52</span>;
+</span></span><span style="display:flex;"><span>            limbs[<span style="color:#ae81ff">2</span>] <span style="color:#f92672">+=</span> limbs[<span style="color:#ae81ff">1</span>] <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">52</span>;
+</span></span><span style="display:flex;"><span>            limbs[<span style="color:#ae81ff">3</span>] <span style="color:#f92672">+=</span> limbs[<span style="color:#ae81ff">2</span>] <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">52</span>;
+</span></span><span style="display:flex;"><span>            limbs[<span style="color:#ae81ff">4</span>] <span style="color:#f92672">+=</span> limbs[<span style="color:#ae81ff">3</span>] <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">52</span>;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>            limbs[<span style="color:#ae81ff">0</span>] <span style="color:#f92672">&amp;=</span> MASK_52;
+</span></span><span style="display:flex;"><span>            limbs[<span style="color:#ae81ff">1</span>] <span style="color:#f92672">&amp;=</span> MASK_52;
+</span></span><span style="display:flex;"><span>            limbs[<span style="color:#ae81ff">2</span>] <span style="color:#f92672">&amp;=</span> MASK_52;
+</span></span><span style="display:flex;"><span>            limbs[<span style="color:#ae81ff">3</span>] <span style="color:#f92672">&amp;=</span> MASK_52;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>            <span style="color:#75715e">// Since the value of a representaion is larger or equal to P
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>            <span style="color:#75715e">// and P + R = 2^256 we carry to bit 49 of limb 4 if it was not
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>            <span style="color:#75715e">// set to 1 already. Furthermore the representations value is 
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>            <span style="color:#75715e">// smaller then 2p + R = 2^256 + P &lt;= 2^257
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>            assert!(limbs[<span style="color:#ae81ff">4</span>] <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">48</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">1</span>);
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>            <span style="color:#75715e">// by zeroing bit 49 we subtract 2^256 and maintain congruecy modulo P
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>            limbs[<span style="color:#ae81ff">4</span>] <span style="color:#f92672">&amp;=</span> MASK_48;
+</span></span><span style="display:flex;"><span>        };
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        <span style="color:#75715e">// verify the representation is normalized
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>        assert!(limbs.iter().rev().lt(P.iter().rev()));
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        Self {
+</span></span><span style="display:flex;"><span>            limbs,
+</span></span><span style="display:flex;"><span>            magnitude: <span style="color:#ae81ff">0</span>,
+</span></span><span style="display:flex;"><span>        }
+</span></span></code></pre></div><p>Now two elements are equal if and only if the normal representation of their difference
+is zero and we can implement the PartialEq trait for <code>Element</code>.</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#66d9ef">impl</span> PartialEq <span style="color:#66d9ef">for</span> Element {
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">fn</span> <span style="color:#a6e22e">eq</span>(<span style="color:#f92672">&amp;</span>self, rhs: <span style="color:#66d9ef">&amp;</span><span style="color:#a6e22e">Self</span>) -&gt; <span style="color:#66d9ef">bool</span> {
+</span></span><span style="display:flex;"><span>        (<span style="color:#f92672">*</span>self <span style="color:#f92672">-</span> <span style="color:#f92672">*</span>rhs).normalize().limbs <span style="color:#f92672">==</span> [<span style="color:#ae81ff">0</span>,<span style="color:#ae81ff">0</span>,<span style="color:#ae81ff">0</span>,<span style="color:#ae81ff">0</span>,<span style="color:#ae81ff">0</span>]
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-rust" data-lang="rust"><span style="display:flex;"><span><span style="color:#66d9ef">pub</span> <span style="color:#66d9ef">fn</span> <span style="color:#a6e22e">multiply</span>(a: <span style="color:#a6e22e">field</span>::Element, b: <span style="color:#a6e22e">field</span>::Element) -&gt; <span style="color:#a6e22e">field</span>::Element {
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">const</span> MASK_48: <span style="color:#66d9ef">u128</span> <span style="color:#f92672">=</span> <span style="color:#ae81ff">0xFFFFFFFFFFFF</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">const</span> MASK_52: <span style="color:#66d9ef">u128</span> <span style="color:#f92672">=</span> <span style="color:#ae81ff">0xFFFFFFFFFFFFF</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">const</span> MASK_64: <span style="color:#66d9ef">u128</span> <span style="color:#f92672">=</span> <span style="color:#ae81ff">0xFFFFFFFFFFFFFFFF</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">const</span> R: <span style="color:#66d9ef">u128</span> <span style="color:#f92672">=</span> <span style="color:#ae81ff">0x1000003D10</span>;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    assert!(a.magnitude <span style="color:#f92672">&lt;</span> <span style="color:#ae81ff">5</span>);
+</span></span><span style="display:flex;"><span>    assert!(b.magnitude <span style="color:#f92672">&lt;</span> <span style="color:#ae81ff">5</span>);
+</span></span><span style="display:flex;"><span>    a.verify();
+</span></span><span style="display:flex;"><span>    b.verify();
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> a0 <span style="color:#f92672">=</span> a.limbs[<span style="color:#ae81ff">0</span>] <span style="color:#66d9ef">as</span> <span style="color:#66d9ef">u128</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> a1 <span style="color:#f92672">=</span> a.limbs[<span style="color:#ae81ff">1</span>] <span style="color:#66d9ef">as</span> <span style="color:#66d9ef">u128</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> a2 <span style="color:#f92672">=</span> a.limbs[<span style="color:#ae81ff">2</span>] <span style="color:#66d9ef">as</span> <span style="color:#66d9ef">u128</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> a3 <span style="color:#f92672">=</span> a.limbs[<span style="color:#ae81ff">3</span>] <span style="color:#66d9ef">as</span> <span style="color:#66d9ef">u128</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> a4 <span style="color:#f92672">=</span> a.limbs[<span style="color:#ae81ff">4</span>] <span style="color:#66d9ef">as</span> <span style="color:#66d9ef">u128</span>;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> b0 <span style="color:#f92672">=</span> b.limbs[<span style="color:#ae81ff">0</span>] <span style="color:#66d9ef">as</span> <span style="color:#66d9ef">u128</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> b1 <span style="color:#f92672">=</span> b.limbs[<span style="color:#ae81ff">1</span>] <span style="color:#66d9ef">as</span> <span style="color:#66d9ef">u128</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> b2 <span style="color:#f92672">=</span> b.limbs[<span style="color:#ae81ff">2</span>] <span style="color:#66d9ef">as</span> <span style="color:#66d9ef">u128</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> b3 <span style="color:#f92672">=</span> b.limbs[<span style="color:#ae81ff">3</span>] <span style="color:#66d9ef">as</span> <span style="color:#66d9ef">u128</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> b4 <span style="color:#f92672">=</span> b.limbs[<span style="color:#ae81ff">4</span>] <span style="color:#66d9ef">as</span> <span style="color:#66d9ef">u128</span>;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">//  [... a b c] is a shorthand for ... + a&lt;&lt;104 + b&lt;&lt;52 + c&lt;&lt;0 mod n.
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>    <span style="color:#75715e">//  for 0 &lt;= x &lt;= 4, px is a shorthand for sum(a[i]*b[x-i], i=0..x).
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>    <span style="color:#75715e">//  for 4 &lt;= x &lt;= 8, px is a shorthand for sum(a[i]*b[x-i], i=(x-4)..4)
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>    <span style="color:#75715e">//  Note that [x 0 0 0 0 0] = [x*R].
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> <span style="color:#66d9ef">mut</span> d <span style="color:#f92672">=</span> a0 <span style="color:#f92672">*</span> b3 <span style="color:#f92672">+</span> a1 <span style="color:#f92672">*</span> b2 <span style="color:#f92672">+</span> a2 <span style="color:#f92672">*</span> b1 <span style="color:#f92672">+</span> a3 <span style="color:#f92672">*</span> b0;
+</span></span><span style="display:flex;"><span>    assert!(d <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">114</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [d 0 0 0] = [p3 0 0 0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> <span style="color:#66d9ef">mut</span> c <span style="color:#f92672">=</span> a4 <span style="color:#f92672">*</span> b4;
+</span></span><span style="display:flex;"><span>    assert!(c <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">112</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [c 0 0 0 0 d 0 0 0] = [p8 0 0 0 0 p3 0 0 0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    d <span style="color:#f92672">+=</span> (c <span style="color:#f92672">&amp;</span> MASK_64) <span style="color:#f92672">*</span> R;
+</span></span><span style="display:flex;"><span>    c <span style="color:#f92672">&gt;&gt;=</span> <span style="color:#ae81ff">64</span>;
+</span></span><span style="display:flex;"><span>    assert!(d <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">115</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    assert!(c <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">48</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [(c&lt;&lt;12) 0 0 0 0 0 d 0 0 0] = [p8 0 0 0 0 p3 0 0 0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> t3 <span style="color:#f92672">=</span> d <span style="color:#f92672">&amp;</span> MASK_52;
+</span></span><span style="display:flex;"><span>    d <span style="color:#f92672">&gt;&gt;=</span> <span style="color:#ae81ff">52</span>;
+</span></span><span style="display:flex;"><span>    assert!(t3 <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">52</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    assert!(d <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">63</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [(c&lt;&lt;12) 0 0 0 0 d t3 0 0 0] = [p8 0 0 0 0 p3 0 0 0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    d <span style="color:#f92672">+=</span> a0 <span style="color:#f92672">*</span> b4 <span style="color:#f92672">+</span> a1 <span style="color:#f92672">*</span> b3 <span style="color:#f92672">+</span> a2 <span style="color:#f92672">*</span> b2 <span style="color:#f92672">+</span> a3 <span style="color:#f92672">*</span> b1 <span style="color:#f92672">+</span> a4 <span style="color:#f92672">*</span> b0;
+</span></span><span style="display:flex;"><span>    assert!(d <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">115</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [(c&lt;&lt;12) 0 0 0 0 d t3 0 0 0] = [p8 0 0 0 p4 p3 0 0 0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    d <span style="color:#f92672">+=</span> (c <span style="color:#f92672">&amp;</span> MASK_64) <span style="color:#f92672">*</span> (R <span style="color:#f92672">&lt;&lt;</span> <span style="color:#ae81ff">12</span>);
+</span></span><span style="display:flex;"><span>    assert!(d <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">116</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [d t3 0 0 0] = [p8 0 0 0 p4 p3 0 0 0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> <span style="color:#66d9ef">mut</span> t4 <span style="color:#f92672">=</span> d <span style="color:#f92672">&amp;</span> MASK_52;
+</span></span><span style="display:flex;"><span>    d <span style="color:#f92672">&gt;&gt;=</span> <span style="color:#ae81ff">52</span>;
+</span></span><span style="display:flex;"><span>    assert!(t4 <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">52</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    assert!(d <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">64</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [d t4 t3 0 0 0] = [p8 0 0 0 p4 p3 0 0 0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> tx <span style="color:#f92672">=</span> t4 <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">48</span>;
+</span></span><span style="display:flex;"><span>    t4 <span style="color:#f92672">&amp;=</span> MASK_48;
+</span></span><span style="display:flex;"><span>    assert!(tx <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">4</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    assert!(t4 <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">48</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [d (t4 + (tx &lt;&lt; 48)) t3 0 0 0] = [p8 0 0 0 p4 p3 0 0 0] */
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>    <span style="color:#75715e">//
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>    c <span style="color:#f92672">=</span> a0 <span style="color:#f92672">*</span> b0;
+</span></span><span style="display:flex;"><span>    assert!(c <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">112</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [d t4+(tx&lt;&lt;48) t3 0 0 c] = [p8 0 0 0 p4 p3 0 0 p0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    d <span style="color:#f92672">+=</span> a1 <span style="color:#f92672">*</span> b4 <span style="color:#f92672">+</span> a2 <span style="color:#f92672">*</span> b3 <span style="color:#f92672">+</span> a3 <span style="color:#f92672">*</span> b2 <span style="color:#f92672">+</span> a4 <span style="color:#f92672">*</span> b1;
+</span></span><span style="display:flex;"><span>    assert!(d <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">115</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [d (t4 + (tx &lt;&lt; 48)) t3 0 0 c] = [p8 0 0 p5 p4 p3 0 0 p0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> <span style="color:#66d9ef">mut</span> u0 <span style="color:#f92672">=</span> d <span style="color:#f92672">&amp;</span> MASK_52;
+</span></span><span style="display:flex;"><span>    d <span style="color:#f92672">&gt;&gt;=</span> <span style="color:#ae81ff">52</span>;
+</span></span><span style="display:flex;"><span>    assert!(u0 <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">52</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    assert!(d <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">63</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [d u0 (t4 + (tx &lt;&lt; 48)) t3 0 0 c] = [p8 0 0 p5 p4 p3 0 0 p0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>    <span style="color:#75715e">// [d 0 (t4 + (tx &lt;&lt; 48) + (u0 &lt;&lt; 52)) t3 0 0 c] = [p8 0 0 p5 p4 p3 0 0 p0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    u0 <span style="color:#f92672">=</span> (u0 <span style="color:#f92672">&lt;&lt;</span> <span style="color:#ae81ff">4</span>) <span style="color:#f92672">|</span> tx;
+</span></span><span style="display:flex;"><span>    assert!(u0 <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">56</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [d 0 t4+(u0&lt;&lt;48) t3 0 0 c] = [p8 0 0 p5 p4 p3 0 0 p0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    c <span style="color:#f92672">+=</span> u0 <span style="color:#f92672">*</span> (R <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">4</span>);
+</span></span><span style="display:flex;"><span>    assert!(c <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">115</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [d 0 t4 t3 0 0 c] = [p8 0 0 p5 p4 p3 0 0 p0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> r0 <span style="color:#f92672">=</span> c <span style="color:#f92672">&amp;</span> MASK_52;
+</span></span><span style="display:flex;"><span>    c <span style="color:#f92672">&gt;&gt;=</span> <span style="color:#ae81ff">52</span>;
+</span></span><span style="display:flex;"><span>    assert!(r0 <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">52</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    assert!(c <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">61</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [d 0 t4 t3 0 c r0] = [p8 0 0 p5 p4 p3 0 0 p0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    c <span style="color:#f92672">+=</span> a0 <span style="color:#f92672">*</span> b1 <span style="color:#f92672">+</span> a1 <span style="color:#f92672">*</span> b0;
+</span></span><span style="display:flex;"><span>    assert!(c <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">114</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [d 0 t4 t3 0 c r0] = [p8 0 0 p5 p4 p3 0 p1 p0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    d <span style="color:#f92672">+=</span> a2 <span style="color:#f92672">*</span> b4 <span style="color:#f92672">+</span> a3 <span style="color:#f92672">*</span> b3 <span style="color:#f92672">+</span> a4 <span style="color:#f92672">*</span> b2;
+</span></span><span style="display:flex;"><span>    assert!(d <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">114</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [d 0 t4 t3 0 c r0] = [p8 0 p6 p5 p4 p3 0 p1 p0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    c <span style="color:#f92672">+=</span> (d <span style="color:#f92672">&amp;</span> MASK_52) <span style="color:#f92672">*</span> R;
+</span></span><span style="display:flex;"><span>    d <span style="color:#f92672">&gt;&gt;=</span> <span style="color:#ae81ff">52</span>;
+</span></span><span style="display:flex;"><span>    assert!(c <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">115</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    assert!(d <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">62</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [d 0 0 t4 t3 0 c r0] = [p8 0 p6 p5 p4 p3 0 p1 p0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> r1 <span style="color:#f92672">=</span> c <span style="color:#f92672">&amp;</span> MASK_52;
+</span></span><span style="display:flex;"><span>    c <span style="color:#f92672">&gt;&gt;=</span> <span style="color:#ae81ff">52</span>;
+</span></span><span style="display:flex;"><span>    assert!(r1 <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">52</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    assert!(c <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">63</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [d 0 0 t4 t3 c r1 r0] = [p8 0 p6 p5 p4 p3 0 p1 p0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    c <span style="color:#f92672">+=</span> a0 <span style="color:#f92672">*</span> b2 <span style="color:#f92672">+</span> a1 <span style="color:#f92672">*</span> b1 <span style="color:#f92672">+</span> a2 <span style="color:#f92672">*</span> b0;
+</span></span><span style="display:flex;"><span>    assert!(c <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">114</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [d 0 0 t4 t3 c r1 r0] = [p8 0 p6 p5 p4 p3 p2 p1 p0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    d <span style="color:#f92672">+=</span> a3 <span style="color:#f92672">*</span> b4 <span style="color:#f92672">+</span> a4 <span style="color:#f92672">*</span> b3;
+</span></span><span style="display:flex;"><span>    assert!(d <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">114</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [d 0 0 t4 t3 c t1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    c <span style="color:#f92672">+=</span> (d <span style="color:#f92672">&amp;</span> MASK_64) <span style="color:#f92672">*</span> R;
+</span></span><span style="display:flex;"><span>    d <span style="color:#f92672">&gt;&gt;=</span> <span style="color:#ae81ff">64</span>;
+</span></span><span style="display:flex;"><span>    assert!(c <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">115</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    assert!(d <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">50</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [(d&lt;&lt;12) 0 0 0 t4 t3 c r1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> r2 <span style="color:#f92672">=</span> c <span style="color:#f92672">&amp;</span> MASK_52;
+</span></span><span style="display:flex;"><span>    c <span style="color:#f92672">&gt;&gt;=</span> <span style="color:#ae81ff">52</span>;
+</span></span><span style="display:flex;"><span>    assert!(r2 <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">52</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    assert!(c <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">63</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [(d&lt;&lt;12) 0 0 0 t4 (t3 + c) r2 r1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    c <span style="color:#f92672">+=</span> (d <span style="color:#f92672">&amp;</span> MASK_64) <span style="color:#f92672">*</span> (R <span style="color:#f92672">&lt;&lt;</span> <span style="color:#ae81ff">12</span>);
+</span></span><span style="display:flex;"><span>    c <span style="color:#f92672">+=</span> t3;
+</span></span><span style="display:flex;"><span>    assert!(c <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">100</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [t4 c r2 r1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> r3 <span style="color:#f92672">=</span> c <span style="color:#f92672">&amp;</span> MASK_52;
+</span></span><span style="display:flex;"><span>    c <span style="color:#f92672">&gt;&gt;=</span> <span style="color:#ae81ff">52</span>;
+</span></span><span style="display:flex;"><span>    assert!(r3 <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">52</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    assert!(c <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">48</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [t4+c r3 r2 r1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">let</span> r4 <span style="color:#f92672">=</span> (c <span style="color:#f92672">&amp;</span> MASK_64) <span style="color:#f92672">+</span> t4;
+</span></span><span style="display:flex;"><span>    assert!(r4 <span style="color:#f92672">&gt;&gt;</span> <span style="color:#ae81ff">49</span> <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// [r4 r3 r2 r1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0]
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>    field::Element {
+</span></span><span style="display:flex;"><span>        limbs: [r0 <span style="color:#66d9ef">as</span> <span style="color:#66d9ef">u64</span>, r1 <span style="color:#66d9ef">as</span> <span style="color:#66d9ef">u64</span>, r2 <span style="color:#66d9ef">as</span> <span style="color:#66d9ef">u64</span>, r3 <span style="color:#66d9ef">as</span> <span style="color:#66d9ef">u64</span>, r4 <span style="color:#66d9ef">as</span> <span style="color:#66d9ef">u64</span>],
+</span></span><span style="display:flex;"><span>        magnitude: <span style="color:#ae81ff">0</span>,
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div>
+
+  </div>
+
+  <footer class="post-footer">
+    <ul class="post-tags">
+    </ul>
+  </footer>
+</article>
+    </main>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css" integrity="sha384-vKruj+a13U8yHIkAyGgK1J3ArTLzrFGBbBc0tDp4ad/EyewESeXE/Iv67Aj8gKZ0" crossorigin="anonymous">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.js" integrity="sha384-PwRUT/YqbnEjkZO0zZxNqcxACrXe+j766U2amXcgMg5457rve2Y7I6ZJSm2A0mS4" crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous"></script>
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        renderMathInElement(document.body, {
+          
+          
+          delimiters: [
+              {left: '$$', right: '$$', display: true},
+              {left: '$', right: '$', display: false},
+              {left: '\\(', right: '\\)', display: false},
+              {left: '\\[', right: '\\]', display: true}
+          ],
+          
+          throwOnError : false
+        });
+    });
+</script>
+</body>
+
+</html>

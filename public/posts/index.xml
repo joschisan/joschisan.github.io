@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Posts on random thoughts on cryptography</title>
+    <link>https://joschisan.github.io/posts/</link>
+    <description>Recent content in Posts on random thoughts on cryptography</description>
+    <generator>Hugo -- gohugo.io</generator>
+    <language>en-us</language>
+    <lastBuildDate>Wed, 04 Jan 2023 19:01:41 +0100</lastBuildDate><atom:link href="https://joschisan.github.io/posts/index.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>Implementing secp256k1&#39;s Primefield</title>
+      <link>https://joschisan.github.io/posts/implementing-bitcoins-primefield/</link>
+      <pubDate>Wed, 04 Jan 2023 19:01:41 +0100</pubDate>
+      
+      <guid>https://joschisan.github.io/posts/implementing-bitcoins-primefield/</guid>
+      <description>In the following we assume familiarity with the mathematical concept of a Primefield. Bitcoins choosen prime is $$p = 2^{256} - 2^{32} - 977$$ hence 256 bits would be sufficient to represent any field element. Therefore we could encode a field element in only four u64 unsigned integers, called limbs. This, however, would force us too handle possible overflow on any additon of two limbs as we would have to use their full range, which would slow down the addition of two field elements substantially.</description>
+    </item>
+    
+  </channel>
+</rss>
