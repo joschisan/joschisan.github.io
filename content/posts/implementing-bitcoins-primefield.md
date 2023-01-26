@@ -210,6 +210,18 @@ impl PartialEq for Element {
     }
 }
 ```
+Let $a,b$ be two field elements
+represented by the limbs $a_i,b_i$. In the following we define the notation
+$$[c_n ... c_0] = \sum_{k \leq n} c_k2^{52} \in F_p$$
+to track the computation in the implementation. Notice that 
+$$[c_5 ... c_0] = [c_4 ... c_0 + c_5r]$$
+for $p = 2^{256} - r$. Once again, the efficiency of the implementation
+depends on $r$ being a small number and we can use the headroom of zeros
+in our limbs to prevent overflow. Now let
+$$p_k = \sum_{i + j = k} a_i b_i$$
+then we can can compute the product of $a$ and $b$ by
+$$ [p_7 ... p_0] \in F_p$$
+Finally, we implement the multiplication. 
 
 ```rust
 pub fn multiply(a: field::Element, b: field::Element) -> field::Element {
@@ -234,11 +246,6 @@ pub fn multiply(a: field::Element, b: field::Element) -> field::Element {
     let b2 = b.limbs[2] as u128;
     let b3 = b.limbs[3] as u128;
     let b4 = b.limbs[4] as u128;
-
-    //  [... a b c] is a shorthand for ... + a<<104 + b<<52 + c<<0 mod n.
-    //  for 0 <= x <= 4, px is a shorthand for sum(a[i]*b[x-i], i=0..x).
-    //  for 4 <= x <= 8, px is a shorthand for sum(a[i]*b[x-i], i=(x-4)..4)
-    //  Note that [x 0 0 0 0 0] = [x*R].
 
     let mut d = a0 * b3 + a1 * b2 + a2 * b1 + a3 * b0;
     assert!(d >> 114 == 0);
